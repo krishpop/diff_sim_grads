@@ -11,7 +11,8 @@ class BounceOnce:
 
     render_time = 0.0
 
-    def __init__(self, cfg, integrator, render=True, profile=False, adapter='cuda'):
+    def __init__(self, cfg, integrator, render=True, profile=False, adapter='cuda',
+                 noise=None, seed=123):
 
         self.frame_dt = 1.0/60.0
         self.frame_steps = int(cfg.simulation_time/self.frame_dt)
@@ -19,6 +20,13 @@ class BounceOnce:
         self.sim_steps = cfg.steps
         self.sim_substeps = int(self.sim_steps/self.frame_steps)
         self.eps = cfg.eps
+        self.noise = noise
+        if self.noise is None:
+            self.num_samples = 1
+        else:
+            self.num_samples = cfg.num_samples
+        if self.noise is not None:
+            np.random.seed(seed)
 
         builder = warp.sim.ModelBuilder()
 
@@ -28,22 +36,26 @@ class BounceOnce:
         self.device = adapter
         self.profile = profile
 
-        self.model = builder.finalize(adapter)
+        self.model = builder.finalize(adapter, requires_grad=True)
 
         self.model.ground = True
         self.model.gravity[1] = 0 # no gravity
         self.model.particle_radius = cfg.radius
         # type of simulation
-        # self.model.customized_particle_ground_wall = False
-        # self.model.customized_particle_bounce_once = True
+        self.model.customized_particle_ground_wall = False
+        self.model.customized_particle_bounce_once = True
+
+        self.custom_integrator  = not isinstance(
+                integrator, (wp.sim.SemiImplicitIntegrator, wp.sim.XPBDIntegrator))
         # soft contact properties
-        # self.model.customized_kn = cfg.customized_kn
-        # self.model.soft_contact_ke = cfg.customized_kn
-        self.model.soft_contact_ke = 1.e+4
-        self.model.soft_contact_kf = 0.0
-        self.model.soft_contact_kd = 1.e+1
-        self.model.soft_contact_mu = 0.25
-        self.model.soft_contact_margin = 10.0
+        if self.custom_integrator:
+            self.model.customized_kn = cfg.customized_kn
+        else:
+            self.model.soft_contact_ke = cfg.customized_kn
+            self.model.soft_contact_kf = 0.0
+            self.model.soft_contact_kd = 1.e+1
+            self.model.soft_contact_mu = 0.
+            self.model.soft_contact_margin = 10.0
         #if isinstance(self.integrator, wp.sim.SemiImplicitIntegrator):
         #else:
         #    sle
@@ -52,8 +64,6 @@ class BounceOnce:
         # self.model.customized_mu = self.customized_mu
 
         self.integrator = integrator
-        self.custom_integrator  = not isinstance(
-                integrator, (wp.sim.SemiImplicitIntegrator, wp.sim.XPBDIntegrator))
 
         self.loss = wp.zeros(1, dtype=wp.float32, device=adapter, requires_grad=True)
 
@@ -66,8 +76,6 @@ class BounceOnce:
                     [0, 0, 0]
                 ], dtype=wp.vec3, device=adapter, requires_grad=True)
             self.states.append(state)
-
-        wp.sim.collide(self.model, self.states[0])
 
         self.save_dir = os.path.join(cfg.THIS_DIR, cfg.result_dir)
         os.makedirs(self.save_dir, exist_ok=True)
@@ -103,6 +111,9 @@ class BounceOnce:
         for i in range(self.sim_steps):
 
             self.states[i].clear_forces()
+
+            if not self.custom_integrator:
+                wp.sim.collide(self.model, self.states[i])
 
             self.integrator.simulate(
                 self.model,
@@ -144,6 +155,7 @@ class BounceOnce:
         return x_grad
 
     def check_grad(self, param):
+        for _ in range(self.num_samples):
         tape = wp.Tape()
         with tape:
             l = self.compute_loss()

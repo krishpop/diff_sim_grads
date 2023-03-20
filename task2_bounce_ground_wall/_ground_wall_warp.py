@@ -3,6 +3,7 @@ import warp as wp
 import warp.sim
 import warp.sim.render
 import numpy as np
+from tqdm import trange
 
 wp.init()
 
@@ -11,7 +12,8 @@ class GroundWall:
 
     render_time = 0.0
 
-    def __init__(self, cfg, integrator_class, render=True, adapter='cpu'):
+    def __init__(self, cfg, integrator, render=True, adapter='cuda',
+                 theta=None):
 
         self.cfg = cfg
         self.frame_dt = 1.0/60.0
@@ -25,23 +27,39 @@ class GroundWall:
         builder = warp.sim.ModelBuilder()
 
         # default up axis is y
-        builder.add_particle(
-            pos=(cfg.init_pos[0], cfg.init_pos[1], 0.0), 
-            vel=(cfg.init_vel[0], cfg.init_vel[1], 0.0), 
-            mass=1.0
-        )
+        if theta:
+            u = np.array([cfg.init_vel[0], cfg.init_vel[1]])
+            u_norm = np.linalg.norm(u)
+            vx, vy = u_norm * np.cos(theta), u_norm * np.sin(theta)
+            builder.add_particle(
+                pos=(cfg.init_pos[0], cfg.init_pos[1], 0.0),
+                vel=(vx, vy, 0.0),
+                mass=1.0
+            )
+        else:
+            builder.add_particle(
+                pos=(cfg.init_pos[0], cfg.init_pos[1], 0.0),
+                vel=(cfg.init_vel[0], cfg.init_vel[1], 0.0),
+                mass=1.0
+            )
         # for rendering purposes
         builder.add_shape_box(body=-1, pos=(2.0, 1.0, 0.0), hx=0.25, hy=1.0, hz=1.0)
 
 
         self.device = adapter
 
+        # create integrator and determine if custom or warp default
+        self.integrator = integrator
+        self.custom_integrator  = not isinstance(
+                integrator, (wp.sim.SemiImplicitIntegrator, wp.sim.XPBDIntegrator))
+
         self.model = builder.finalize(adapter)
 
         self.model.ground = True
         self.model.particle_radius = cfg.radius
+
         # type of simulation
-        self.model.customized_particle_ground_wall = True 
+        self.model.customized_particle_ground_wall = True
         self.model.customized_particle_ground = False
         # this will decide the position of the wall in simulation
         self.model.customized_wall_x = 1.75
@@ -53,8 +71,6 @@ class GroundWall:
 
         # this is for the pbd elasticity
         self.model.customized_elasticity = cfg.elasticity
-
-        self.integrator = integrator_class()
 
         self.target = [cfg.target[0], cfg.target[1], 0.]
         self.loss = wp.zeros(1, dtype=wp.float32, device=adapter, requires_grad=True)
@@ -73,7 +89,7 @@ class GroundWall:
 
         if render:
             self.stage = warp.sim.render.SimRenderer(
-                self.model, 
+                self.model,
                 os.path.join(self.save_dir, cfg.name+".usd")
             )
 
@@ -95,28 +111,28 @@ class GroundWall:
         tid = wp.tid()
         # gradient descent step
         x[tid] = x[tid] - grad[tid]*alpha
-    
+
     def compute_loss(self):
 
         self.loss.zero_()
         for i in range(self.sim_steps):
-                
+
             self.states[i].clear_forces()
 
             self.integrator.simulate(
-                self.model, 
-                self.states[i], 
-                self.states[i+1], 
+                self.model,
+                self.states[i],
+                self.states[i+1],
                 self.sim_dt
             )
-                    
+
         # compute loss on final state
         wp.launch(self.terminal_loss_kernel, dim=1, inputs=[self.states[-1].particle_q, self.target, self.loss], device=self.device)
 
         return self.loss
 
     def render(self):
-        
+
         for i in range(0, self.sim_steps, self.sim_substeps):
 
             self.stage.begin_frame(self.render_time)
@@ -126,7 +142,7 @@ class GroundWall:
             self.stage.end_frame()
 
             self.render_time += self.frame_dt
-        
+
         self.stage.save()
 
     def train(self):
@@ -169,5 +185,6 @@ class GroundWall:
         with tape:
             l = self.compute_loss()
         tape.backward(l)
-        x_grad_analytic = tape.gradients[param]
+        x_grad_analytic = tape.gradients[param].numpy().copy()
+        tape.zero()
         return x_grad_analytic

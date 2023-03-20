@@ -25,8 +25,8 @@ cfg.name = os.path.basename(__file__)[:-3]
 cfg.THIS_DIR = THIS_DIR
 xpbd_settings = dict(iterations=2, soft_contact_relaxation=1)
 # integrator = wp.sim.XPBDIntegrator(**xpbd_settings)
+# integrator.contact_con_weighting = False
 integrator = CustomizedXPBDIntegratorForBounceOnce()
-integrator.contact_con_weighting = False
 system = BounceOnce(
     cfg,
     integrator=integrator,

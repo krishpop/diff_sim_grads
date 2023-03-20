@@ -18,14 +18,15 @@ cfg.dt = cfg.simulation_time / cfg.steps # 1./480
 cfg.name = os.path.basename(__file__)[:-3]
 cfg.name += f"_mu_{cfg.customized_mu}"
 cfg.THIS_DIR = THIS_DIR
-
+integrator = CustomizedXPBDIntegratorForGroundWall()
 system = GroundWall(
     cfg,
-    integrator_class=CustomizedXPBDIntegratorForGroundWall,
-    adapter='cpu',
+    integrator=integrator,
+    adapter='cuda',
     render=True
 )
 loss = system.compute_loss()
+system.render()
 print("------------Task 2: Position-based Dynamics (Warp)-----------")
 print(f"loss: {loss}")
 
@@ -40,10 +41,10 @@ if cfg.is_train:
     print("---------start training------------")
     loss_np, init_vel_np, last_traj_np = system.train()
     print("---------finish training------------")
-    
+
     np.savez(
-        os.path.join(system.save_dir, cfg.name), 
-        loss=loss_np, 
+        os.path.join(system.save_dir, cfg.name),
+        loss=loss_np,
         init_vel=init_vel_np,
         last_traj=last_traj_np,
     )

@@ -5,6 +5,7 @@ PARENT_DIR = os.path.dirname(THIS_DIR)
 import sys
 sys.path.append(PARENT_DIR)
 
+from utils.customized_integrator_euler import CustomizedSymplecticEulerIntegrator
 from _bounce_once_warp import BounceOnce
 import matplotlib.pyplot as plt
 
@@ -19,11 +20,13 @@ cfg.name = os.path.basename(__file__)[:-3]
 cfg.THIS_DIR = THIS_DIR
 
 integrator = wp.sim.SemiImplicitIntegrator()
+# integrator = CustomizedSymplecticEulerIntegrator()
 system = BounceOnce(
     cfg,
     integrator=integrator,
     adapter='cuda',
     render=True,
+    noise=cfg.noise
 )
 loss = system.compute_loss()
 system.render()
@@ -31,10 +34,12 @@ system.render()
 print("------------Task 1: Compliant Model (Warp)-----------")
 print(f"loss: {loss}")
 
-particle_f = system.states[1].particle_f if not system.custom_integrator else system.states[0].external_particle_f
+# baseline grad terms:
 x_grad = system.check_grad(system.states[0].particle_q)
 v_grad = system.check_grad(system.states[0].particle_qd)
+particle_f = system.states[1].particle_f if not system.custom_integrator else system.states[0].external_particle_f
 ctrl0_grad = system.check_grad(particle_f)
+for i in range(cfg.num_samples):
 
 x_grad_num = system.check_grad_numerical(system.states[0].particle_q)
 v_grad_num = system.check_grad_numerical(system.states[0].particle_qd)

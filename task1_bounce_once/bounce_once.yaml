@@ -17,4 +17,6 @@ method: symplectic_euler # for intergration in diffcosim
 toi: True
 result_dir: results
 render_difftaichi: False
-eps: 1e-3
+eps: 1e-1
+num_samples: 20
+init_noise: 0.2
